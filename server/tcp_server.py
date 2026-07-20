@@ -2,15 +2,17 @@
 import socket
 import threading
 import json
+import uuid
 
 from core.constants import ENCODING
+from core.protocol import build_message, encode_tcp_message
 
 class TCPServer:
     def __init__(self, tcp_port: int):
         self.tcp_port = tcp_port
         self.running = False
         self.server_socket = None
-        self.clients = []  # Lista para guardar las conexiones activas
+        self.clients = {}  # Diccionario: {client_socket: player_info}
 
     def start(self):
         """Inicia el servidor TCP para aceptar conexiones de jugadores."""
@@ -42,8 +44,8 @@ class TCPServer:
                 client_socket, addr = self.server_socket.accept()
                 print(f"[TCP] Nueva conexión entrante de {addr}")
                 
-                # Registramos al cliente (más adelante esto será un objeto de sesión más complejo)
-                self.clients.append(client_socket)
+                # Registramos el socket sin datos por ahora
+                self.clients[client_socket] = {"addr": addr, "id": None, "name": None}
                 
                 # Creamos un hilo EXCLUSIVO para leer los mensajes de este cliente
                 client_thread = threading.Thread(
@@ -96,20 +98,38 @@ class TCPServer:
                 
         # Limpieza al salir del bucle
         if client_socket in self.clients:
-            self.clients.remove(client_socket)
+            del self.clients[client_socket]
         client_socket.close()
 
+    def _send_to_client(self, client_socket: socket.socket, message_dict: dict):
+        """Empaqueta un diccionario en JSON con salto de línea y lo envía al cliente."""
+        try:
+            bytes_to_send = encode_tcp_message(message_dict)
+            client_socket.sendall(bytes_to_send)
+        except Exception as e:
+            print(f"[TCP] Error al enviar mensaje: {e}")
+
     def _process_message(self, json_string: str, client_socket: socket.socket, addr: tuple):
-        """Convierte el string a JSON y reacciona según el tipo de mensaje."""
         try:
             message = json.loads(json_string)
             msg_type = message.get("type")
             
-            print(f"[TCP] Mensaje '{msg_type}' recibido de {addr}")
-            
-            # Aquí es donde más adelante enrutaremos los mensajes (join, input, interact)
             if msg_type == "join":
-                print(f"      -> Jugador intentando unirse: {message.get('name')}")
+                player_name = message.get('name', 'JugadorDesconocido')
+                
+                # Generamos un ID único corto para el jugador
+                player_id = str(uuid.uuid4())[:8] 
+                
+                # Guardamos los datos del jugador en nuestra memoria
+                self.clients[client_socket]["id"] = player_id
+                self.clients[client_socket]["name"] = player_name
+                
+                print(f"[JUEGO] Jugador '{player_name}' (ID: {player_id}) se unió.")
+                
+                # Respondemos con el mensaje 'welcome' exigido por el protocolo
+                welcome_msg = build_message("welcome", id=player_id)
+                self._send_to_client(client_socket, welcome_msg)
+                print(f"      -> Enviado 'welcome' a {player_name}")
                 
         except json.JSONDecodeError:
             print(f"[TCP] Error: JSON inválido recibido de {addr}")
