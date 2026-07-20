@@ -1,5 +1,5 @@
-# client/client_main.py
 from client.discovery_scanner import DiscoveryScanner
+from client.game_client import GameClient
 
 def main():
     print("--- Captura la Bandera ---")
@@ -8,24 +8,39 @@ def main():
     
     opcion = input("Elige una opción: ")
     scanner = DiscoveryScanner(timeout=10.0)
+    servidor_elegido = None
     
     if opcion == "1":
         servidores = scanner.scan_local_network()
-        if not servidores:
-            print("No se encontraron servidores en la red local.")
-        else:
+        if servidores:
             print("\n--- Servidores Encontrados ---")
             for i, srv in enumerate(servidores):
-                print(f"[{i+1}] {srv['name']} ({srv['ip']}:{srv['tcp_port']}) - Jugadores: {srv['players']}")
-                
+                print(f"[{i+1}] {srv['name']} ({srv['ip']}:{srv['tcp_port']})")
+            
+            # Elegimos el primero por defecto para probar rápido
+            servidor_elegido = servidores[0]
+        else:
+            print("No se encontraron servidores.")
+            
     elif opcion == "2":
         ip = input("Ingresa la IP del servidor: ")
         puerto = int(input("Ingresa el puerto TCP: "))
-        servidor = scanner.manual_connection(ip, puerto)
-        print(f"Conectando manualmente a {servidor['ip']}:{servidor['tcp_port']}...")
+        servidor_elegido = scanner.manual_connection(ip, puerto)
+
+    # --- Nueva Lógica de Conexión TCP ---
+    if servidor_elegido:
+        nombre = input("\nIngresa tu nombre de jugador: ")
+        cliente_tcp = GameClient(
+            host=servidor_elegido["ip"], 
+            port=servidor_elegido["tcp_port"], 
+            player_name=nombre
+        )
         
-    else:
-        print("Opción no válida.")
+        if cliente_tcp.connect():
+            # Mantenemos el hilo principal vivo mientras el cliente juega
+            input("Presiona ENTER para salir del juego...\n")
+            cliente_tcp.running = False
+            cliente_tcp.sock.close()
 
 if __name__ == "__main__":
     main()
