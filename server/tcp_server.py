@@ -13,6 +13,11 @@ class TCPServer:
         self.running = False
         self.server_socket = None
         self.clients = {}  # Diccionario: {client_socket: player_info}
+        self.game_engine = None
+
+    def set_game_engine(self, game_engine):
+        """Conecta el servidor TCP con la lógica del juego."""
+        self.game_engine = game_engine
 
     def start(self):
         """Inicia el servidor TCP para aceptar conexiones de jugadores."""
@@ -36,6 +41,19 @@ class TCPServer:
         if self.server_socket:
             self.server_socket.close()
         print("[TCP] Servidor de juego detenido.")
+
+    def broadcast(self, message_dict: dict):
+        """Envía un mensaje a TODOS los clientes conectados actualmente."""
+        bytes_to_send = encode_tcp_message(message_dict)
+        # Copiamos la lista de sockets para iterar de forma segura
+        active_sockets = list(self.clients.keys())
+        
+        for sock in active_sockets:
+            try:
+                sock.sendall(bytes_to_send)
+            except Exception:
+                # Si falla el envío, el hilo individual _handle_client se encargará de limpiarlo
+                pass
 
     def _accept_connections(self):
         """Bucle infinito que acepta nuevos clientes y les asigna un hilo."""
@@ -98,7 +116,12 @@ class TCPServer:
                 
         # Limpieza al salir del bucle
         if client_socket in self.clients:
+            player_id = self.clients[client_socket].get("id")
             del self.clients[client_socket]
+            
+        if player_id and self.game_engine:
+            self.game_engine.remove_player(player_id)
+            
         client_socket.close()
 
     def _send_to_client(self, client_socket: socket.socket, message_dict: dict):
@@ -125,8 +148,12 @@ class TCPServer:
                 self.clients[client_socket]["name"] = player_name
                 
                 print(f"[JUEGO] Jugador '{player_name}' (ID: {player_id}) se unió.")
+
+                # 1. Registrar en el GameEngine
+                if self.game_engine:
+                    self.game_engine.add_player(player_id, player_name)
                 
-                # Respondemos con el mensaje 'welcome' exigido por el protocolo
+                # 2. Respondemos con el mensaje 'welcome' exigido por el protocolo
                 welcome_msg = build_message("welcome", id=player_id)
                 self._send_to_client(client_socket, welcome_msg)
                 print(f"      -> Enviado 'welcome' a {player_name}")
