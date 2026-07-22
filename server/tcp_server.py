@@ -136,6 +136,10 @@ class TCPServer:
         try:
             message = json.loads(json_string)
             msg_type = message.get("type")
+
+            # Obtenemos el ID registrado previamente para este socket específico
+            player_info = self.clients.get(client_socket, {})
+            player_id = player_info.get("id")
             
             if msg_type == "join":
                 player_name = message.get('name', 'JugadorDesconocido')
@@ -157,6 +161,19 @@ class TCPServer:
                 welcome_msg = build_message("welcome", id=player_id)
                 self._send_to_client(client_socket, welcome_msg)
                 print(f"      -> Enviado 'welcome' a {player_name}")
+
+            elif msg_type == "input":
+                # Enviamos el vector de movimiento al motor
+                if player_id and self.game_engine:
+                    direction = message.get("dir", {})
+                    dir_x = direction.get("x", 0)
+                    dir_y = direction.get("y", 0)
+                    self.game_engine.update_player_input(player_id, dir_x, dir_y)
+
+            elif msg_type == "interact":
+                if player_id and self.game_engine:
+                    self.game_engine.handle_player_interact(player_id)
+
                 
         except json.JSONDecodeError:
             print(f"[TCP] Error: JSON inválido recibido de {addr}")

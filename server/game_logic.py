@@ -1,6 +1,8 @@
 # server/game_logic.py
 import time
 import threading
+import math
+import random
 from core.protocol import build_message
 
 class GameEngine:
@@ -23,14 +25,19 @@ class GameEngine:
     def add_player(self, player_id: str, name: str):
         """Registra a un nuevo jugador en el mapa con una posición inicial."""
         with self.lock:
+
+            # Posición aleatoria segura (cerca de los bordes)
+            spawn_x = random.choice([random.randint(15, 150), random.randint(850, 985)])
+            spawn_y = random.choice([random.randint(15, 150), random.randint(850, 985)])
+
             self.players[player_id] = {
                 "name": name,
-                "x": 100,  # Posición inicial X
-                "y": 100,  # Posición inicial Y
+                "x": spawn_x,  # Posición inicial X
+                "y": spawn_y,  # Posición inicial Y
                 "score": 0,
                 "has_flag": False
             }
-            print(f"[ENGINE] Jugador '{name}' ({player_id}) agregado al estado del mundo.")
+            print(f"[ENGINE] Jugador '{name}' ({player_id}) agregado al estado del mundo en ({spawn_x},{spawn_y}).")
 
     def remove_player(self, player_id: str):
         """Elimina a un jugador desconectado y libera la bandera si la llevaba."""
@@ -39,12 +46,79 @@ class GameEngine:
                 # Si el jugador tenía la bandera, la soltamos en su última posición
                 if self.flag["carrier_id"] == player_id:
                     self.flag["carrier_id"] = None
-                    self.flag["x"] = self.players[player_id]["x"]
-                    self.flag["y"] = self.players[player_id]["y"]
-                    print(f"[ENGINE] ¡La bandera fue soltada en ({self.flag['x']}, {self.flag['y']})!")
+                    self.flag["x"] = 500
+                    self.flag["y"] = 500
+                    print(f"[ENGINE] ¡El portador se ha ido de la partida! La bandera regreso a ({self.flag['x']}, {self.flag['y']}).")
                 
                 del self.players[player_id]
                 print(f"[ENGINE] Jugador {player_id} eliminado del mundo.")
+
+    def update_player_input(self, player_id: str, dir_x: int, dir_y: int):
+        with self.lock:
+            if player_id not in self.players:
+                return
+            
+            player = self.players[player_id]
+            speed = 200
+            dt = 0.05  
+            
+            # Si no hay dirección, salimos
+            if dir_x == 0 and dir_y == 0:
+                return
+                
+            # Normalización (Pitágoras) para evitar que la diagonal sea más rápida
+            magnitude = math.hypot(dir_x, dir_y)
+            norm_x = dir_x / magnitude
+            norm_y = dir_y / magnitude
+            
+            new_x = player["x"] + (norm_x * speed * dt)
+            new_y = player["y"] + (norm_y * speed * dt)
+            
+            # Límites del mapa (0 a 1000)
+            player["x"] = max(15, min(985, round(new_x)))
+            player["y"] = max(15, min(985, round(new_y)))
+
+            # Si el jugador tiene la bandera, la bandera se mueve con él
+            if self.flag["carrier_id"] == player_id:
+                self.flag["x"] = player["x"]
+                self.flag["y"] = player["y"]
+
+    def handle_player_interact(self, player_id: str):
+        """Procesa el intento de un jugador de agarrar o robar la bandera."""
+        with self.lock:
+            if player_id not in self.players:
+                return
+                
+            player = self.players[player_id]
+            
+            # 1. CASO CAPTURA: La bandera está libre en el suelo
+            if self.flag["carrier_id"] is None:
+                # Distancia entre el jugador y la bandera
+                dist = math.hypot(player["x"] - self.flag["x"], player["y"] - self.flag["y"])
+                
+                # Si la distancia es <= 40, captura la bandera
+                if dist <= 40:
+                    self.flag["carrier_id"] = player_id
+                    player["has_flag"] = True
+                    print(f"[ENGINE] ¡El jugador {player['name']} ha CAPTURADO la bandera!")
+                    
+            # 2. CASO ROBO: La bandera la tiene otro jugador
+            elif self.flag["carrier_id"] != player_id:
+                carrier_id = self.flag["carrier_id"]
+                carrier = self.players.get(carrier_id)
+                
+                if carrier:
+                    # Distancia entre el ladrón y el portador
+                    dist = math.hypot(player["x"] - carrier["x"], player["y"] - carrier["y"])
+                    
+                    # Si la distancia es <= 40, roba la bandera
+                    if dist <= 40:
+                        # Le quitamos la bandera al portador actual
+                        carrier["has_flag"] = False
+                        # Se la damos al ladrón
+                        self.flag["carrier_id"] = player_id
+                        player["has_flag"] = True
+                        print(f"[ENGINE] ¡El jugador {player['name']} ha ROBADO la bandera a {carrier['name']}!")
 
     def start(self):
         """Inicia el hilo maestro a 20Hz."""

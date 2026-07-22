@@ -1,3 +1,4 @@
+import time
 from client.discovery_scanner import DiscoveryScanner
 from client.game_client import GameClient
 
@@ -37,10 +38,17 @@ def main():
         )
         
         if cliente_tcp.connect():
-            # Mantenemos el hilo principal vivo mientras el cliente juega
-            input("Presiona ENTER para salir del juego...\n")
-            cliente_tcp.running = False
-            cliente_tcp.sock.close()
+            try:
+                # Mantenemos el hilo principal vivo SIN usar input() 
+                # para no secuestrar el teclado de msvcrt
+                while cliente_tcp.running:
+                    time.sleep(0.5)
+            except KeyboardInterrupt:
+                print("\nSaliendo del juego...")
+            finally:
+                cliente_tcp.running = False
+                if cliente_tcp.sock:
+                    cliente_tcp.sock.close()
 
 if __name__ == "__main__":
     main()
