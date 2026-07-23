@@ -3,6 +3,7 @@ import socket
 import threading
 import json
 import uuid
+import time
 
 from core.constants import ENCODING
 from core.protocol import build_message, encode_tcp_message
@@ -152,15 +153,48 @@ class TCPServer:
                 self.clients[client_socket]["name"] = player_name
                 
                 print(f"[JUEGO] Jugador '{player_name}' (ID: {player_id}) se unió.")
-
-                # 1. Registrar en el GameEngine
-                if self.game_engine:
-                    self.game_engine.add_player(player_id, player_name)
-                
-                # 2. Respondemos con el mensaje 'welcome' exigido por el protocolo
-                welcome_msg = build_message("welcome", id=player_id)
+    
+                # Respondemos con el mensaje 'welcome' exigido por el protocolo
+                welcome_msg = build_message(
+                    "welcome", 
+                    player_id=player_id, 
+                    config={
+                        "map_size": 1000,
+                        "circle_radius": 300,
+                        "player_radius": 15,
+                        "interact_radius": 40,
+                        "speed": 200,
+                        "tick_rate": 20
+                    }
+                )
                 self._send_to_client(client_socket, welcome_msg)
                 print(f"      -> Enviado 'welcome' a {player_name}")
+
+                time.sleep(0.1)
+
+                players_in_lobby = []
+                for client_info in self.clients.values():
+                    if client_info.get("id"):
+                        players_in_lobby.append({
+                            "id": client_info["id"],
+                            "name": client_info["name"]
+                        })
+                
+                # Armamos el diccionario
+                lobby_msg = {
+                    "type": "lobby",
+                    "players": players_in_lobby
+                }
+
+                print(f"      [DEBUG STRICT] Mandando: {lobby_msg}")
+                
+                # Lo transmitimos a todos los conectados
+                self.broadcast(lobby_msg)
+                print(f"      -> Broadcast de 'lobby' enviado a {len(players_in_lobby)} jugadores.")
+
+                # Registrar en el GameEngine
+                if self.game_engine:
+                    self.game_engine.add_player(player_id, player_name)
 
             elif msg_type == "input":
                 # Enviamos el vector de movimiento al motor

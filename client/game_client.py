@@ -21,6 +21,8 @@ class GameClient:
         self.running = False
         self.my_id = None
         self.latest_state = None
+        self.is_game_over = False
+        self.winner_name = None
 
     def connect(self) -> bool:
         """Establece la conexión TCP y envía el mensaje de 'join'."""

@@ -83,6 +83,13 @@ class GameEngine:
                 self.flag["x"] = player["x"]
                 self.flag["y"] = player["y"]
 
+                # Comprobar condicion de victoria
+                dist_to_center = math.hypot(player["x"] - 500, player["y"] - 500)
+                if dist_to_center > 315:
+                    self.is_game_over = True
+                    self.winner_name = player["name"]
+                    print(f"[ENGINE] ¡{self.winner_name} ha cruzado el límite y HA GANADO LA PARTIDA!")
+
     def handle_player_interact(self, player_id: str):
         """Procesa el intento de un jugador de agarrar o robar la bandera."""
         with self.lock:
