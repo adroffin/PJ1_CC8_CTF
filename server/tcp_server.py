@@ -4,9 +4,16 @@ import threading
 import json
 import uuid
 import time
-
-from core.constants import ENCODING
-from core.protocol import build_message, encode_tcp_message
+from core.constants import (
+    MAP_SIZE,
+    CIRCLE_RADIUS,
+    PLAYER_RADIUS,
+    INTERACT_RADIUS,
+    SPEED,
+    TICK_RATE,
+    ENCODING,
+)
+from core.protocol import build_message, encode_tcp_message, decode_message
 
 class TCPServer:
     def __init__(self, tcp_port: int):
@@ -44,17 +51,23 @@ class TCPServer:
         print("[TCP] Servidor de juego detenido.")
 
     def broadcast(self, message_dict: dict):
-        """Envía un mensaje a TODOS los clientes conectados actualmente."""
         bytes_to_send = encode_tcp_message(message_dict)
-        # Copiamos la lista de sockets para iterar de forma segura
-        active_sockets = list(self.clients.keys())
-        
-        for sock in active_sockets:
+
+        dead_clients = []
+
+        for sock in list(self.clients.keys()):
             try:
                 sock.sendall(bytes_to_send)
             except Exception:
-                # Si falla el envío, el hilo individual _handle_client se encargará de limpiarlo
+                dead_clients.append(sock)
+
+        for sock in dead_clients:
+            try:
+                sock.close()
+            except:
                 pass
+
+            self.clients.pop(sock, None)
 
     def _accept_connections(self):
         """Bucle infinito que acepta nuevos clientes y les asigna un hilo."""
@@ -85,6 +98,7 @@ class TCPServer:
         obligatoria del buffer y el salto de línea (\n).
         """
         buffer = ""
+        player_id = None
         
         while self.running:
             try:
@@ -135,7 +149,9 @@ class TCPServer:
 
     def _process_message(self, json_string: str, client_socket: socket.socket, addr: tuple):
         try:
-            message = json.loads(json_string)
+            message = decode_message(
+                json_string.encode(ENCODING)
+            )
             msg_type = message.get("type")
 
             # Obtenemos el ID registrado previamente para este socket específico
@@ -143,6 +159,18 @@ class TCPServer:
             player_id = player_info.get("id")
             
             if msg_type == "join":
+
+                version = message.get("v")
+
+                if version != 1:
+                    error_msg = build_message(
+                        "error",
+                        message="Version de protocolo incompatible."
+                    )
+                    self._send_to_client(client_socket, error_msg)
+                    client_socket.close()
+                    return
+
                 player_name = message.get('name', 'JugadorDesconocido')
                 
                 # Generamos un ID único corto para el jugador
@@ -157,20 +185,18 @@ class TCPServer:
                 # Respondemos con el mensaje 'welcome' exigido por el protocolo
                 welcome_msg = build_message(
                     "welcome", 
-                    player_id=player_id, 
+                    id=player_id, 
                     config={
-                        "map_size": 1000,
-                        "circle_radius": 300,
-                        "player_radius": 15,
-                        "interact_radius": 40,
-                        "speed": 200,
-                        "tick_rate": 20
+                        "map_size": MAP_SIZE,
+                        "circle_radius": CIRCLE_RADIUS,
+                        "player_radius": PLAYER_RADIUS,
+                        "interact_radius": INTERACT_RADIUS,
+                        "speed": SPEED,
+                        "tick_rate": TICK_RATE
                     }
                 )
                 self._send_to_client(client_socket, welcome_msg)
                 print(f"      -> Enviado 'welcome' a {player_name}")
-
-                time.sleep(0.1)
 
                 players_in_lobby = []
                 for client_info in self.clients.values():
@@ -199,12 +225,21 @@ class TCPServer:
             elif msg_type == "input":
                 # Enviamos el vector de movimiento al motor
                 if player_id and self.game_engine:
-                    direction = message.get("dir", {})
-                    dir_x = direction.get("x", 0)
-                    dir_y = direction.get("y", 0)
+                    direction = message.get("dir")
+
+                    if not isinstance(direction, dict):
+                        return
+
+                    dir_x = int(direction.get("x", 0))
+                    dir_y = int(direction.get("y", 0))
+
                     self.game_engine.update_player_input(player_id, dir_x, dir_y)
 
             elif msg_type == "interact":
+
+                if player_id is None:
+                    return
+
                 if player_id and self.game_engine:
                     self.game_engine.handle_player_interact(player_id)
 
