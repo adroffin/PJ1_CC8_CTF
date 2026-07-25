@@ -8,7 +8,7 @@ def main():
     print("2. Conexión manual por IP")
     
     opcion = input("Elige una opción: ")
-    scanner = DiscoveryScanner(timeout=10.0)
+    scanner = DiscoveryScanner(timeout=5.0)
     servidor_elegido = None
     
     if opcion == "1":

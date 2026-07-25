@@ -21,8 +21,10 @@ class GameClient:
         self.running = False
         self.my_id = None
         self.latest_state = None
-        self.is_game_over = False
-        self.winner_name = None
+        self.game_state = "LOBBY"
+        self.winner = None
+        self.lobby_players = []
+        self.server_config = {}
 
     def connect(self) -> bool:
         """Establece la conexión TCP y envía el mensaje de 'join'."""
@@ -78,9 +80,14 @@ class GameClient:
             
             if msg_type == "welcome":
                 self.my_id = msg.get("id")
+                self.server_config = msg.get("config", {})
             elif msg_type == "state":
                 self.latest_state = msg
+                self.game_state = msg.get("game_state", "LOBBY")
+                self.winner = msg.get("winner")
                 self._render_ui()
+            elif msg_type == "lobby":
+                self.lobby_players = msg["players"]
         except json.JSONDecodeError:
             pass
 
@@ -92,16 +99,48 @@ class GameClient:
         os.system('cls' if sys.platform == 'win32' else 'clear')
         
         print("=== CAPTURA LA BANDERA CTF ===")
+
+        print(f"Estado: {self.game_state}")
+
+        if self.game_state == "LOBBY":
+            print("Esperando más jugadores...")
+
+        elif self.game_state == "COUNTDOWN":
+            print("La partida comenzará en unos segundos...")
+
+        elif self.game_state == "PLAYING":
+            print("¡¡La partida está en curso!!")
+
+        elif self.game_state == "GAME_OVER":
+
+            print()
+
+            print("===== FIN DE LA PARTIDA =====")
+
+            if self.winner:
+                print(f"Ganador: {self.winner}")
+
+            print()
+
         print("Usa las teclas W, A, S, D para moverte. Presiona la tecla 'P' para tomar/robar la bandera.\n")
         
         flag = self.latest_state.get("flag", {})
         print(f"Bandera en: ({flag.get('x')}, {flag.get('y')}) | Portador: {flag.get('carrier_id') or 'Nadie'}\n")
         
         print("--- Jugadores ---")
-        players = self.latest_state.get("players", {})
-        for p_id, p_data in players.items():
-            me_tag = " (TÚ)" if p_id == self.my_id else ""
-            print(f"- {p_data['name']}{me_tag}: Posición ({p_data['x']}, {p_data['y']})")
+        players = self.latest_state.get("players", [])
+
+        for player in players:
+            me_tag = ""
+            if player["id"] == self.my_id:
+                me_tag = " (TÚ)"
+            bandera = "Sí" if player["has_flag"] else "No"
+
+            print(
+                f"- {player['name']}{me_tag}"
+                f"\n   Posición: ({player['x']}, {player['y']})"
+                f"\n   Lleva bandera: {bandera}\n"
+            )
 
     def _input_loop(self):
         while self.running:
