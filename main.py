@@ -3,21 +3,22 @@ import time
 import pygame
 import threading
 
-# Importamos las lógicas existentes de tu proyecto
+# --- IMPORTACIONES DE TU LÓGICA ---
 from server.tcp_server import TCPServer
 from server.game_logic import GameEngine
 from client.game_client import GameClient
 from core.protocol import build_message, encode_tcp_message
-
-# Importamos las constantes (asumimos que existen en tu core.constants)
 from core.constants import MAP_SIZE, CIRCLE_RADIUS, PLAYER_RADIUS
+
+# --- IMPORTACIONES UDP (TUS ARCHIVOS) ---
+from client.discovery_scanner import DiscoveryScanner
+from server.discovery_service import DiscoveryService
 
 # --- CONFIGURACIÓN DE PYGAME ---
 WINDOW_SIZE = 800
-SCALE = WINDOW_SIZE / MAP_SIZE  # Para adaptar el mapa de 1000x1000 a la ventana de 800x800
+SCALE = WINDOW_SIZE / MAP_SIZE
 FPS = 60
 
-# Colores
 C_BG = (30, 30, 30)
 C_WHITE = (255, 255, 255)
 C_GREEN = (50, 200, 50)
@@ -27,17 +28,13 @@ C_GRAY = (100, 100, 100)
 C_BLUE = (50, 150, 255)
 C_ACTIVE_BOX = (200, 200, 200)
 C_INACTIVE_BOX = (80, 80, 80)
+C_ORANGE = (255, 140, 0)
 
 class GUIClient(GameClient):
-    """
-    Heredamos de tu GameClient original pero sobrescribimos la UI de consola 
-    y la lectura de teclado para que Pygame se encargue de eso.
-    """
     def _render_ui(self):
-        pass  # Desactivamos el renderizado en la terminal
-
+        pass 
     def _input_loop(self):
-        pass  # Desactivamos el bucle de teclado por consola (msvcrt)
+        pass
 
 def draw_text(surface, text, font, color, x, y, center=False):
     text_obj = font.render(text, True, color)
@@ -56,148 +53,282 @@ def main():
     font = pygame.font.SysFont("arial", 24, bold=True)
     title_font = pygame.font.SysFont("arial", 48, bold=True)
 
-    # Estados de la aplicación: MENU, SERVER, CLIENT
     app_state = "MENU"
-    
-    # Variables globales para el servidor o cliente
     my_server = None
     my_engine = None
     my_client = None
+    my_discovery = None
 
     last_input_time = 0
-    input_cooldown = 0.05  # Enviar movimiento al servidor cada 50ms (20Hz)
+    input_cooldown = 0.05 
 
-    # Variables para el cuadro de texto del nombre
     player_name = ""
-    input_rect = pygame.Rect(200, 220, 400, 50)
-    input_active = False
+    server_ip = "127.0.0.1"
+    server_port = 5555  
+    
+    name_rect = pygame.Rect(200, 160, 400, 40)
+    ip_rect = pygame.Rect(200, 250, 280, 40) 
+    search_btn_rect = pygame.Rect(490, 250, 110, 40) 
+    
+    active_input = None
+    search_status = "" 
+    connection_status = "" 
+    
+    is_searching = False 
+    is_connecting = False  
+
+    # --- DICCIONARIO DE COMUNICACIÓN ENTRE HILOS ---
+    # Esto evita que los hilos secundarios modifiquen Pygame directamente
+    thread_results = {
+        "search_done": False,
+        "search_msg": "",
+        "found_ip": "",
+        "found_port": 5555,
+        "connect_status": None, # Puede ser "SUCCESS" o "ERROR"
+        "client_instance": None,
+        "client_name": ""
+    }
+
+    # --- FUNCIÓN HILO DE BÚSQUEDA ---
+    def search_server_thread():
+        scanner = DiscoveryScanner(timeout=2.0)
+        servers = scanner.scan_local_network()
+        
+        if servers:
+            thread_results["found_ip"] = servers[0]["ip"]
+            thread_results["found_port"] = servers[0]["tcp_port"] 
+            thread_results["search_msg"] = f"¡Encontrado: {servers[0]['name']}!"
+        else:
+            thread_results["search_msg"] = "No se encontraron servidores."
+        
+        thread_results["search_done"] = True
+
+    # --- FUNCIÓN HILO DE CONEXIÓN ---
+    def connect_client_thread(ip, port, name):
+        temp_client = GUIClient(ip, port, name)
+        
+        if temp_client.connect():
+            thread_results["client_instance"] = temp_client
+            thread_results["client_name"] = name
+            thread_results["connect_status"] = "SUCCESS"
+        else:
+            thread_results["connect_status"] = "ERROR"
 
     running = True
     while running:
         screen.fill(C_BG)
         mouse_pos = pygame.mouse.get_pos()
 
+        # --- VERIFICAR MENSAJES DE LOS HILOS (SEGURO PARA PYGAME) ---
+        if thread_results["search_done"]:
+            search_status = thread_results["search_msg"]
+            if thread_results["found_ip"]:
+                server_ip = thread_results["found_ip"]
+                server_port = thread_results["found_port"]
+            is_searching = False
+            thread_results["search_done"] = False
+
+        if thread_results["connect_status"] == "SUCCESS":
+            my_client = thread_results["client_instance"]
+            app_state = "CLIENT"
+            pygame.display.set_caption(f"CTF Game - Cliente ({thread_results['client_name']})")
+            is_connecting = False
+            connection_status = ""
+            thread_results["connect_status"] = None
+            
+        elif thread_results["connect_status"] == "ERROR":
+            connection_status = "Error: Servidor inalcanzable."
+            is_connecting = False
+            thread_results["connect_status"] = None
+
+        # --- BUCLE DE EVENTOS ---
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
             
-            # Controles en el MENÚ
+            # --- EVENTOS DEL MENÚ ---
             if app_state == "MENU":
                 if event.type == pygame.MOUSEBUTTONDOWN:
                     if event.button == 1:
-                        # Verificar si se hizo clic en el cuadro de texto
-                        if input_rect.collidepoint(event.pos):
-                            input_active = True
+                        if name_rect.collidepoint(event.pos):
+                            active_input = "NAME"
+                        elif ip_rect.collidepoint(event.pos):
+                            active_input = "IP"
                         else:
-                            input_active = False
+                            active_input = None
 
-                        # Botón de Servidor
-                        if 200 <= mouse_pos[0] <= 600 and 310 <= mouse_pos[1] <= 390:
+                        # Botón: Buscar Servidor (UDP)
+                        if search_btn_rect.collidepoint(event.pos) and not is_searching and not is_connecting:
+                            is_searching = True
+                            search_status = "Buscando en la red..."
+                            connection_status = ""
+                            threading.Thread(target=search_server_thread, daemon=True).start()
+
+                        # Botón: Servidor
+                        if 200 <= mouse_pos[0] <= 600 and 340 <= mouse_pos[1] <= 420 and not is_connecting:
                             app_state = "SERVER"
-                            pygame.display.set_caption("CTF Game - Servidor Dedicado")
+                            final_name = player_name.strip() if player_name.strip() else "Servidor CTF"
+                            pygame.display.set_caption(f"CTF Game - Servidor Espectador ({final_name})")
+                            
+                            # Aquí se asegura de iniciar tanto TCP como el servicio Discovery
                             my_server = TCPServer(5555)
                             my_engine = GameEngine(my_server)
                             my_server.set_game_engine(my_engine)
                             my_server.start()
                             my_engine.start()
-
-                        # Botón de Cliente
-                        elif 200 <= mouse_pos[0] <= 600 and 430 <= mouse_pos[1] <= 510:
-                            # Si el usuario no escribió nada, le ponemos un nombre por defecto
-                            final_name = player_name.strip() if player_name.strip() else "JugadorAnonimo"
                             
-                            app_state = "CLIENT"
-                            pygame.display.set_caption(f"CTF Game - Cliente ({final_name})")
-                            # Para este ejemplo, conectamos a localhost (puedes cambiarlo)
-                            my_client = GUIClient("127.0.0.1", 5555, final_name)
-                            if not my_client.connect():
-                                print("No se pudo conectar al servidor.")
-                                app_state = "MENU"
+                            my_discovery = DiscoveryService(server_name=final_name, tcp_port=5555)
+                            my_discovery.start()
 
-                # Lógica para escribir en el cuadro de texto
-                if event.type == pygame.KEYDOWN and input_active:
+                        # Botón: Cliente
+                        elif 200 <= mouse_pos[0] <= 600 and 450 <= mouse_pos[1] <= 530 and not is_connecting:
+                            final_name = player_name.strip() if player_name.strip() else "JugadorAnonimo"
+                            final_ip = server_ip.strip() if server_ip.strip() else "127.0.0.1"
+                            
+                            is_connecting = True
+                            connection_status = "Conectando al servidor..."
+                            search_status = ""
+                            threading.Thread(
+                                target=connect_client_thread, 
+                                args=(final_ip, server_port, final_name), 
+                                daemon=True
+                            ).start()
+
+                # Lógica para escribir
+                if event.type == pygame.KEYDOWN and active_input:
                     if event.key == pygame.K_BACKSPACE:
-                        player_name = player_name[:-1]
+                        if active_input == "NAME":
+                            player_name = player_name[:-1]
+                        elif active_input == "IP":
+                            server_ip = server_ip[:-1]
                     else:
-                        # Limitar el nombre a un máximo de 15 caracteres para no romper la UI
-                        if len(player_name) < 15 and event.unicode.isprintable():
-                            player_name += event.unicode
+                        if event.unicode.isprintable():
+                            if active_input == "NAME" and len(player_name) < 15:
+                                player_name += event.unicode
+                            elif active_input == "IP" and len(server_ip) < 15:
+                                server_ip += event.unicode
 
-            # Controles de juego (Tecla P para bandera)
+            # --- EVENTOS DEL SERVIDOR ---
+            if app_state == "SERVER" and event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                if my_engine and my_engine.game_state == "LOBBY" and my_engine.get_player_count() >= 2:
+                    if 300 <= mouse_pos[0] <= 500 and 700 <= mouse_pos[1] <= 750:
+                        my_engine.start_game_manually()
+
+            # --- EVENTOS DEL CLIENTE ---
             if app_state == "CLIENT" and event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_p and my_client.sock:
-                    interact_msg = build_message("interact")
                     try:
-                        my_client.sock.sendall(encode_tcp_message(interact_msg))
+                        my_client.sock.sendall(encode_tcp_message(build_message("interact")))
                     except:
                         pass
 
-        # --- DIBUJADO SEGÚN EL ESTADO DE LA APP ---
+        # --- RENDERIZADO DEL MENÚ ---
         if app_state == "MENU":
-            draw_text(screen, "CAPTURA LA BANDERA CTF", title_font, C_WHITE, WINDOW_SIZE//2, 100, center=True)
+            draw_text(screen, "CAPTURA LA BANDERA CTF", title_font, C_WHITE, WINDOW_SIZE//2, 80, center=True)
             
-            # Dibujar cuadro de texto para el nombre
-            draw_text(screen, "Ingresa tu nombre:", font, C_WHITE, 200, 180)
-            box_color = C_ACTIVE_BOX if input_active else C_INACTIVE_BOX
-            pygame.draw.rect(screen, box_color, input_rect, border_radius=5)
-            # Dibujar texto dentro del cuadro (añadimos cursor parpadeante si está activo)
-            display_name = player_name + ("|" if input_active and time.time() % 1 > 0.5 else "")
-            text_surface = font.render(display_name, True, (0, 0, 0) if input_active else C_WHITE)
-            screen.blit(text_surface, (input_rect.x + 10, input_rect.y + 10))
+            draw_text(screen, "Ingresa tu nombre:", font, C_WHITE, 200, 130)
+            box_color_name = C_ACTIVE_BOX if active_input == "NAME" else C_INACTIVE_BOX
+            pygame.draw.rect(screen, box_color_name, name_rect, border_radius=5)
+            disp_name = player_name + ("|" if active_input == "NAME" and time.time() % 1 > 0.5 else "")
+            screen.blit(font.render(disp_name, True, (0, 0, 0) if active_input == "NAME" else C_WHITE), (name_rect.x + 10, name_rect.y + 5))
 
-            # Botón Servidor
-            color_srv = C_BLUE if (200 <= mouse_pos[0] <= 600 and 310 <= mouse_pos[1] <= 390) else C_GRAY
-            pygame.draw.rect(screen, color_srv, (200, 310, 400, 80), border_radius=10)
-            draw_text(screen, "Iniciar como SERVIDOR", font, C_WHITE, WINDOW_SIZE//2, 350, center=True)
+            draw_text(screen, "IP del Servidor (Cliente):", font, C_WHITE, 200, 220)
+            box_color_ip = C_ACTIVE_BOX if active_input == "IP" else C_INACTIVE_BOX
+            pygame.draw.rect(screen, box_color_ip, ip_rect, border_radius=5)
+            disp_ip = server_ip + ("|" if active_input == "IP" and time.time() % 1 > 0.5 else "")
+            screen.blit(font.render(disp_ip, True, (0, 0, 0) if active_input == "IP" else C_WHITE), (ip_rect.x + 10, ip_rect.y + 5))
+
+            btn_color = C_ORANGE if search_btn_rect.collidepoint(mouse_pos) else C_GRAY
+            pygame.draw.rect(screen, btn_color, search_btn_rect, border_radius=5)
+            draw_text(screen, "Buscar", font, C_WHITE, search_btn_rect.centerx, search_btn_rect.centery, center=True)
             
-            # Botón Cliente
-            color_cli = C_GREEN if (200 <= mouse_pos[0] <= 600 and 430 <= mouse_pos[1] <= 510) else C_GRAY
-            pygame.draw.rect(screen, color_cli, (200, 430, 400, 80), border_radius=10)
-            draw_text(screen, "Conectar como CLIENTE", font, C_WHITE, WINDOW_SIZE//2, 470, center=True)
+            if search_status:
+                draw_text(screen, search_status, font, C_YELLOW, WINDOW_SIZE//2, 305, center=True)
 
+            color_srv = C_BLUE if (200 <= mouse_pos[0] <= 600 and 340 <= mouse_pos[1] <= 420) else C_GRAY
+            pygame.draw.rect(screen, color_srv, (200, 340, 400, 80), border_radius=10)
+            draw_text(screen, "Iniciar como SERVIDOR", font, C_WHITE, WINDOW_SIZE//2, 380, center=True)
+            
+            color_cli = C_GREEN if (200 <= mouse_pos[0] <= 600 and 450 <= mouse_pos[1] <= 530) else C_GRAY
+            pygame.draw.rect(screen, color_cli, (200, 450, 400, 80), border_radius=10)
+            draw_text(screen, "Conectar como CLIENTE", font, C_WHITE, WINDOW_SIZE//2, 490, center=True)
+
+            if connection_status:
+                draw_text(screen, connection_status, font, C_YELLOW, WINDOW_SIZE//2, 550, center=True)
+
+        # --- RENDERIZADO DEL SERVIDOR ---
         elif app_state == "SERVER":
-            draw_text(screen, "SERVIDOR EN EJECUCIÓN", title_font, C_YELLOW, WINDOW_SIZE//2, 100, center=True)
-            
             if my_engine:
-                players_count = my_engine.get_player_count()
-                game_state = my_engine.game_state
-                draw_text(screen, f"Estado del Juego: {game_state}", font, C_WHITE, WINDOW_SIZE//2, 250, center=True)
-                draw_text(screen, f"Jugadores conectados: {players_count}", font, C_WHITE, WINDOW_SIZE//2, 300, center=True)
-                draw_text(screen, "(Cierra la ventana para apagar el servidor)", font, C_GRAY, WINDOW_SIZE//2, WINDOW_SIZE - 50, center=True)
-
-        elif app_state == "CLIENT":
-            if not my_client.latest_state:
-                draw_text(screen, "Conectando / Esperando estado del servidor...", font, C_WHITE, WINDOW_SIZE//2, WINDOW_SIZE//2, center=True)
-            else:
-                state = my_client.latest_state
-                g_state = my_client.game_state
-
-                # 1. Dibujar el mapa y la zona segura (Safe Zone)
                 center_x = (MAP_SIZE // 2) * SCALE
                 center_y = (MAP_SIZE // 2) * SCALE
                 pygame.draw.circle(screen, (50, 50, 50), (center_x, center_y), CIRCLE_RADIUS * SCALE, 2)
                 
-                # 2. Dibujar la bandera
+                with my_engine.lock:
+                    game_state = my_engine.game_state
+                    player_count = len(my_engine.players)
+                    winner = my_engine.winner_name
+                    flag = my_engine.flag
+                    players_list = list(my_engine.players.values())
+                
+                if flag.get("carrier_id") is None:
+                    fx = flag.get("x", MAP_SIZE//2) * SCALE
+                    fy = flag.get("y", MAP_SIZE//2) * SCALE
+                    pygame.draw.rect(screen, C_YELLOW, (fx - 10, fy - 10, 20, 20))
+
+                for player in players_list:
+                    # Usamos .get() con un valor por defecto seguro para evitar KeyErrors
+                    px = player.get("x", MAP_SIZE // 2) * SCALE
+                    py = player.get("y", MAP_SIZE // 2) * SCALE
+                    p_name = player.get("name", "Jugador")
+                    
+                    color = C_YELLOW if player.get("has_flag") else C_RED
+                    pygame.draw.circle(screen, color, (px, py), PLAYER_RADIUS * SCALE)
+                    draw_text(screen, p_name, font, C_WHITE, px, py - 25, center=True)
+
+                draw_text(screen, f"[ESPECTADOR] ESTADO: {game_state}", font, C_WHITE, 10, 10)
+                draw_text(screen, f"Jugadores Conectados: {player_count}", font, C_WHITE, 10, 40)
+
+                if game_state == "GAME_OVER" and winner:
+                    draw_text(screen, f"¡GANADOR: {winner}!", title_font, C_YELLOW, WINDOW_SIZE//2, WINDOW_SIZE//2, center=True)
+
+                if game_state == "LOBBY":
+                    if player_count >= 2:
+                        btn_color = C_GREEN if (300 <= mouse_pos[0] <= 500 and 700 <= mouse_pos[1] <= 750) else C_GRAY
+                        pygame.draw.rect(screen, btn_color, (300, 700, 200, 50), border_radius=5)
+                        draw_text(screen, "Iniciar Partida", font, C_WHITE, WINDOW_SIZE//2, 725, center=True)
+                    else:
+                        draw_text(screen, "Esperando más jugadores (Mín. 2)...", font, C_GRAY, WINDOW_SIZE//2, 725, center=True)
+
+        # --- RENDERIZADO DEL CLIENTE ---
+        elif app_state == "CLIENT":
+            if not my_client.latest_state:
+                draw_text(screen, "Conectando / Esperando estado...", font, C_WHITE, WINDOW_SIZE//2, WINDOW_SIZE//2, center=True)
+            else:
+                state = my_client.latest_state
+                g_state = my_client.game_state
+
+                center_x = (MAP_SIZE // 2) * SCALE
+                center_y = (MAP_SIZE // 2) * SCALE
+                pygame.draw.circle(screen, (50, 50, 50), (center_x, center_y), CIRCLE_RADIUS * SCALE, 2)
+                
                 flag = state.get("flag", {})
                 if flag.get("carrier_id") is None:
                     fx = flag.get("x", MAP_SIZE//2) * SCALE
                     fy = flag.get("y", MAP_SIZE//2) * SCALE
                     pygame.draw.rect(screen, C_YELLOW, (fx - 10, fy - 10, 20, 20))
 
-                # 3. Dibujar jugadores
                 for player in state.get("players", []):
-                    px = player["x"] * SCALE
-                    py = player["y"] * SCALE
+                    # Prevención de KeyError usando .get()
+                    px = player.get("x", MAP_SIZE // 2) * SCALE
+                    py = player.get("y", MAP_SIZE // 2) * SCALE
+                    p_name = player.get("name", "Jugador")
                     
-                    is_me = (player["id"] == my_client.my_id)
+                    is_me = (player.get("id") == my_client.my_id)
                     color = C_YELLOW if player.get("has_flag") else (C_GREEN if is_me else C_RED)
                     
                     pygame.draw.circle(screen, color, (px, py), PLAYER_RADIUS * SCALE)
-                    
-                    # Dibujar nombre
-                    draw_text(screen, player["name"], font, C_WHITE, px, py - 25, center=True)
+                    draw_text(screen, p_name, font, C_WHITE, px, py - 25, center=True)
 
-                # 4. Enviar inputs
                 if g_state == "PLAYING":
                     keys = pygame.key.get_pressed()
                     dir_x, dir_y = 0, 0
@@ -215,7 +346,6 @@ def main():
                         except:
                             pass
 
-                # 5. Dibujar UI (HUD)
                 draw_text(screen, f"ESTADO: {g_state}", font, C_WHITE, 10, 10)
                 if g_state == "GAME_OVER" and my_client.winner:
                     draw_text(screen, f"¡GANADOR: {my_client.winner}!", title_font, C_YELLOW, WINDOW_SIZE//2, WINDOW_SIZE//2, center=True)
@@ -223,13 +353,10 @@ def main():
         pygame.display.flip()
         clock.tick(FPS)
 
-    # Limpieza
-    if my_server:
-        my_server.stop()
-    if my_engine:
-        my_engine.stop()
-    if my_client:
-        my_client.running = False
+    if my_discovery: my_discovery.stop() 
+    if my_server: my_server.stop()
+    if my_engine: my_engine.stop()
+    if my_client: my_client.running = False
     pygame.quit()
     sys.exit()
 

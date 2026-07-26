@@ -2,7 +2,7 @@
 
 # --- Red y Conexión ---
 DISCOVERY_PORT = 8888           # Puerto UDP fijo para buscar servidores
-BROADCAST_IP = "127.255.255.255" # Dirección IP especial para enviar a toda la red local
+BROADCAST_IP = "255.255.255.255" # Dirección IP especial para enviar a toda la red local
 ENCODING = "utf-8"              # Codificación de caracteres obligatoria
 
 # --- Protocolo ---

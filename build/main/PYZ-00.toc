@@ -52,6 +52,10 @@
    'Files\\WindowsApps\\PythonSoftwareFoundation.Python.3.12_3.12.2800.0_x64__qbz5n2kfra8p0\\Lib\\calendar.py',
    'PYMODULE'),
   ('client', '-', 'PYMODULE'),
+  ('client.discovery_scanner',
+   'C:\\Users\\Adrian '
+   'Romero\\Desktop\\PJ1_CC8_CTF\\client\\discovery_scanner.py',
+   'PYMODULE'),
   ('client.game_client',
    'C:\\Users\\Adrian Romero\\Desktop\\PJ1_CC8_CTF\\client\\game_client.py',
    'PYMODULE'),
@@ -415,6 +419,10 @@
    'Files\\WindowsApps\\PythonSoftwareFoundation.Python.3.12_3.12.2800.0_x64__qbz5n2kfra8p0\\Lib\\selectors.py',
    'PYMODULE'),
   ('server', '-', 'PYMODULE'),
+  ('server.discovery_service',
+   'C:\\Users\\Adrian '
+   'Romero\\Desktop\\PJ1_CC8_CTF\\server\\discovery_service.py',
+   'PYMODULE'),
   ('server.game_logic',
    'C:\\Users\\Adrian Romero\\Desktop\\PJ1_CC8_CTF\\server\\game_logic.py',
    'PYMODULE'),
