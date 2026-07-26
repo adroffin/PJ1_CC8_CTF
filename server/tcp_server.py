@@ -139,6 +139,23 @@ class TCPServer:
             
         client_socket.close()
 
+        # Verificamos si estamos en la fase LOBBY para actualizar la interfaz
+        if self.game_engine and self.game_engine.game_state == "LOBBY":
+            players_in_lobby = []
+            for client_info in self.clients.values():
+                if client_info.get("id"):
+                    players_in_lobby.append({
+                        "id": client_info["id"],
+                        "name": client_info["name"]
+                    })
+            
+            lobby_msg = {
+                "type": "lobby",
+                "players": players_in_lobby
+            }
+            self.broadcast(lobby_msg)
+            print(f"[TCP] Broadcast de 'lobby' actualizado enviado tras la desconexión de un jugador.")
+
     def _send_to_client(self, client_socket: socket.socket, message_dict: dict):
         """Empaqueta un diccionario en JSON con salto de línea y lo envía al cliente."""
         try:
@@ -185,7 +202,7 @@ class TCPServer:
                 # Respondemos con el mensaje 'welcome' exigido por el protocolo
                 welcome_msg = build_message(
                     "welcome", 
-                    id=player_id, 
+                    player_id=player_id,
                     config={
                         "map_size": MAP_SIZE,
                         "circle_radius": CIRCLE_RADIUS,

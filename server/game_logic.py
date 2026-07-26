@@ -25,6 +25,7 @@ class GameEngine:
         self.countdown_start = None
         self.game_over_start = None
         self.manual_start = False
+        self.last_countdown_sec = None
         
         self.lock = threading.Lock()  # Candado para proteger la memoria compartida
         
@@ -38,7 +39,7 @@ class GameEngine:
         self.flag = {
             "x": center,
             "y": center,
-            "carrier_id": None
+            "owner": None
         }
 
     def add_player(self, player_id: str, name: str):
@@ -71,8 +72,8 @@ class GameEngine:
         with self.lock:
             if player_id in self.players:
                 # Si el jugador tenía la bandera, la soltamos en su última posición
-                if self.flag["carrier_id"] == player_id:
-                    self.flag["carrier_id"] = None
+                if self.flag["owner"] == player_id:
+                    self.flag["owner"] = None
                     self.flag["x"] = center
                     self.flag["y"] = center
                     print(f"[ENGINE] ¡El portador se ha ido de la partida! La bandera regreso a ({self.flag['x']}, {self.flag['y']}).")
@@ -115,20 +116,20 @@ class GameEngine:
             player = self.players[player_id]
             
             # 1. CASO CAPTURA: La bandera está libre en el suelo
-            if self.flag["carrier_id"] is None:
+            if self.flag["owner"] is None:
                 # Distancia entre el jugador y la bandera
                 dist = math.hypot(player["x"] - self.flag["x"], player["y"] - self.flag["y"])
                 
                 # Si la distancia es <= 40, captura la bandera
                 if dist <= INTERACT_RADIUS:
-                    self.flag["carrier_id"] = player_id
+                    self.flag["owner"] = player_id
                     player["has_flag"] = True
                     print(f"[ENGINE] ¡El jugador {player['name']} ha CAPTURADO la bandera!")
                     
             # 2. CASO ROBO: La bandera la tiene otro jugador
-            elif self.flag["carrier_id"] != player_id:
-                carrier_id = self.flag["carrier_id"]
-                carrier = self.players.get(carrier_id)
+            elif self.flag["owner"] != player_id:
+                owner = self.flag["owner"]
+                carrier = self.players.get(owner)
                 
                 if carrier:
                     # Distancia entre el ladrón y el portador
@@ -139,7 +140,7 @@ class GameEngine:
                         # Le quitamos la bandera al portador actual
                         carrier["has_flag"] = False
                         # Se la damos al ladrón
-                        self.flag["carrier_id"] = player_id
+                        self.flag["owner"] = player_id
                         player["has_flag"] = True
                         print(f"[ENGINE] ¡El jugador {player['name']} ha ROBADO la bandera a {carrier['name']}!")
 
@@ -175,17 +176,34 @@ class GameEngine:
                     if len(self.players) >= 2 and self.manual_start:
                         self.game_state = "COUNTDOWN"
                         self.countdown_start = time.perf_counter()
-                        print("[ENGINE] Iniciando cuenta regresiva...")
+                        self.last_countdown_sec = 5
+
+                        # Enviar el primer número de la cuenta regresiva
+                        countdown_msg = build_message("countdown", seconds=self.last_countdown_sec)
+                        self.tcp_server.broadcast(countdown_msg)
+                        print(f"[ENGINE] Iniciando cuenta regresiva: {self.last_countdown_sec}...")
 
                 if self.game_state == "COUNTDOWN":
                     elapsed = time.perf_counter() - self.countdown_start
-                    if elapsed >= 3:
+                    # Calculamos cuántos segundos quedan realmente
+                    seconds_left = math.ceil(5 - elapsed)
+                    
+                    if seconds_left <= 0:
                         self.game_state = "PLAYING"
+                        # Enviar el mensaje START al terminar la cuenta
+                        start_msg = build_message("start")
+                        self.tcp_server.broadcast(start_msg)
                         print("[ENGINE] La partida ha comenzado.")
+                        
+                    elif seconds_left < self.last_countdown_sec:
+                        # Si cambió el segundo, actualizamos y disparamos el mensaje
+                        self.last_countdown_sec = seconds_left
+                        countdown_msg = build_message("countdown", seconds=self.last_countdown_sec)
+                        self.tcp_server.broadcast(countdown_msg)
 
                 # Movimiento de jugadores
                 if self.game_state == "PLAYING":
-                    for player in self.players.values():
+                    for p_id, player in self.players.items():
 
                         dx = player["dir_x"]
                         dy = player["dir_y"]
@@ -240,13 +258,14 @@ class GameEngine:
 
                                 self.game_state = "GAME_OVER"
                                 self.game_over_start = time.perf_counter()
-                                self.winner_name = player["name"]
+                                self.winner_name = p_id
 
                                 print("[ENGINE] Fin de la partida.")
+                                print(f"[ENGINE] {player['name']} ganó la partida.")
 
-                                print(
-                                    f"[ENGINE] {self.winner_name} ganó la partida."
-                                )
+                                # Creamos y disparamos el mensaje dedicado de game_over para todos
+                                game_over_msg = build_message("game_over", player_id=p_id, winner=p_id)
+                                self.tcp_server.broadcast(game_over_msg)
                     
                 if self.game_state == "GAME_OVER":
 
@@ -258,7 +277,7 @@ class GameEngine:
                             self.is_game_over = False
                             self.winner_name = None
                             center = MAP_SIZE // 2
-                            self.flag["carrier_id"] = None
+                            self.flag["owner"] = None
                             self.flag["x"] = center
                             self.flag["y"] = center
 
@@ -281,26 +300,27 @@ class GameEngine:
 
                             print("[ENGINE] Regresando al Lobby.")
 
-                players_list = []
-                for p_id, p_data in self.players.items():
-                    # Creamos una copia para no alterar la memoria original
-                    player_info = p_data.copy()
-                    # Inyectamos el ID como una propiedad interna exigida por los clientes
-                    player_info["id"] = p_id
-                    players_list.append(player_info)
+                if self.game_state in ["PLAYING", "GAME_OVER"]:
+                    players_list = []
+                    for p_id, p_data in self.players.items():
+                        # Creamos una copia para no alterar la memoria original
+                        player_info = p_data.copy()
+                        # Inyectamos el ID como una propiedad interna exigida por los clientes
+                        player_info["id"] = p_id
+                        players_list.append(player_info)
 
-                # Construimos el mensaje usando la NUEVA lista en lugar del diccionario
-                state_message = build_message(
-                    "state",
-                    players=players_list,
-                    flag=self.flag,
-                    game_state=self.game_state,
-                    winner=self.winner_name
-                )
+                    # Construimos el mensaje usando la NUEVA lista en lugar del diccionario
+                    state_message = build_message(
+                        "state",
+                        players=players_list,
+                        flag=self.flag,
+                        game_state=self.game_state,
+                        winner=self.winner_name
+                    )
                     
             
             # 2. Transmitimos el estado a todos los clientes conectados
-            if self.players:  # Solo transmitimos si hay al menos un jugador
+            if self.players and self.game_state in ["PLAYING", "GAME_OVER"]:  # Solo transmitimos si hay al menos un jugador
                 self.tcp_server.broadcast(state_message)
             
             # 3. Regulamos el tiempo para mantener los 20Hz exactos

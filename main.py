@@ -270,7 +270,7 @@ def main():
                     flag = my_engine.flag
                     players_list = list(my_engine.players.values())
                 
-                if flag.get("carrier_id") is None:
+                if flag.get("owner") is None:
                     fx = flag.get("x", MAP_SIZE//2) * SCALE
                     fy = flag.get("y", MAP_SIZE//2) * SCALE
                     pygame.draw.rect(screen, C_YELLOW, (fx - 10, fy - 10, 20, 20))
@@ -301,54 +301,79 @@ def main():
 
         # --- RENDERIZADO DEL CLIENTE ---
         elif app_state == "CLIENT":
-            if not my_client.latest_state:
-                draw_text(screen, "Conectando / Esperando estado...", font, C_WHITE, WINDOW_SIZE//2, WINDOW_SIZE//2, center=True)
-            else:
-                state = my_client.latest_state
-                g_state = my_client.game_state
+            g_state = my_client.game_state
 
-                center_x = (MAP_SIZE // 2) * SCALE
-                center_y = (MAP_SIZE // 2) * SCALE
-                pygame.draw.circle(screen, (50, 50, 50), (center_x, center_y), CIRCLE_RADIUS * SCALE, 2)
-                
-                flag = state.get("flag", {})
-                if flag.get("carrier_id") is None:
-                    fx = flag.get("x", MAP_SIZE//2) * SCALE
-                    fy = flag.get("y", MAP_SIZE//2) * SCALE
-                    pygame.draw.rect(screen, C_YELLOW, (fx - 10, fy - 10, 20, 20))
+            state = my_client.latest_state
 
-                for player in state.get("players", []):
-                    # Prevención de KeyError usando .get()
-                    px = player.get("x", MAP_SIZE // 2) * SCALE
-                    py = player.get("y", MAP_SIZE // 2) * SCALE
-                    p_name = player.get("name", "Jugador")
+            if g_state == "LOBBY":
+                draw_text(screen, f"LOBBY - {len(my_client.lobby_players)} Jugadores", title_font, C_WHITE, WINDOW_SIZE//2, 100, center=True)
+                draw_text(screen, "Esperando a que el anfitrión inicie...", font, C_GRAY, WINDOW_SIZE//2, 150, center=True)
+
+            elif g_state == "COUNTDOWN":
+                sec = getattr(my_client, "countdown_seconds", "")
+                draw_text(screen, f"¡Iniciando en {sec}!", title_font, C_YELLOW, WINDOW_SIZE//2, WINDOW_SIZE//2, center=True)
+
+            elif g_state in ["PLAYING", "GAME_OVER"]:
+                if not state:
+                    draw_text(screen, "Cargando mapa...", font, C_WHITE, WINDOW_SIZE//2, WINDOW_SIZE//2, center=True)
+                elif state:
+                    center_x = (MAP_SIZE // 2) * SCALE
+                    center_y = (MAP_SIZE // 2) * SCALE
+                    pygame.draw.circle(screen, (50, 50, 50), (center_x, center_y), CIRCLE_RADIUS * SCALE, 2)
                     
-                    is_me = (player.get("id") == my_client.my_id)
-                    color = C_YELLOW if player.get("has_flag") else (C_GREEN if is_me else C_RED)
-                    
-                    pygame.draw.circle(screen, color, (px, py), PLAYER_RADIUS * SCALE)
-                    draw_text(screen, p_name, font, C_WHITE, px, py - 25, center=True)
+                    flag = state.get("flag", {})
+                    if flag.get("owner") is None:
+                        fx = flag.get("x", MAP_SIZE//2) * SCALE
+                        fy = flag.get("y", MAP_SIZE//2) * SCALE
+                        pygame.draw.rect(screen, C_YELLOW, (fx - 10, fy - 10, 20, 20))
 
-                if g_state == "PLAYING":
-                    keys = pygame.key.get_pressed()
-                    dir_x, dir_y = 0, 0
-                    if keys[pygame.K_w]: dir_y -= 1
-                    if keys[pygame.K_s]: dir_y += 1
-                    if keys[pygame.K_a]: dir_x -= 1
-                    if keys[pygame.K_d]: dir_x += 1
+                    for player in state.get("players", []):
+                        # Prevención de KeyError usando .get()
+                        px = player.get("x", MAP_SIZE // 2) * SCALE
+                        py = player.get("y", MAP_SIZE // 2) * SCALE
 
-                    current_time = time.time()
-                    if current_time - last_input_time >= input_cooldown:
-                        try:
-                            input_msg = build_message("input", dir={"x": dir_x, "y": dir_y})
-                            my_client.sock.sendall(encode_tcp_message(input_msg))
-                            last_input_time = current_time
-                        except:
-                            pass
+                        p_id = player.get("id")
+                        p_name = player.get("name")
+                        if not p_name:
+                            p_name = "Jugador"
+                            for lp in my_client.lobby_players:
+                                if lp.get("id") == p_id:
+                                    p_name = lp.get("name", "Jugador")
+                                    break
+                        
+                        is_me = (player.get("id") == my_client.my_id)
+                        color = C_YELLOW if player.get("has_flag") else (C_GREEN if is_me else C_RED)
+                        
+                        pygame.draw.circle(screen, color, (px, py), PLAYER_RADIUS * SCALE)
+                        draw_text(screen, p_name, font, C_WHITE, px, py - 25, center=True)
 
-                draw_text(screen, f"ESTADO: {g_state}", font, C_WHITE, 10, 10)
-                if g_state == "GAME_OVER" and my_client.winner:
-                    draw_text(screen, f"¡GANADOR: {my_client.winner}!", title_font, C_YELLOW, WINDOW_SIZE//2, WINDOW_SIZE//2, center=True)
+                    if g_state == "PLAYING":
+                        keys = pygame.key.get_pressed()
+                        dir_x, dir_y = 0, 0
+                        if keys[pygame.K_w]: dir_y -= 1
+                        if keys[pygame.K_s]: dir_y += 1
+                        if keys[pygame.K_a]: dir_x -= 1
+                        if keys[pygame.K_d]: dir_x += 1
+
+                        current_time = time.time()
+                        if current_time - last_input_time >= input_cooldown:
+                            try:
+                                input_msg = build_message("input", dir={"x": dir_x, "y": dir_y})
+                                my_client.sock.sendall(encode_tcp_message(input_msg))
+                                last_input_time = current_time
+                            except:
+                                pass
+
+                    draw_text(screen, f"ESTADO: {g_state}", font, C_WHITE, 10, 10)
+                    if g_state == "GAME_OVER" and my_client.winner:
+
+                        win_name = my_client.winner
+                        for lp in my_client.lobby_players:
+                            if lp.get("id") == my_client.winner:
+                                win_name = lp.get("name", "Jugador")
+                                break
+
+                        draw_text(screen, f"¡GANADOR: {win_name}!", title_font, C_YELLOW, WINDOW_SIZE//2, WINDOW_SIZE//2, center=True)
 
         pygame.display.flip()
         clock.tick(FPS)

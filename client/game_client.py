@@ -55,7 +55,7 @@ class GameClient:
         buffer = ""
         while self.running:
             try:
-                data = self.sock.recv(1024)
+                data = self.sock.recv(8192)
                 if not data:
                     print("\n[TCP] Desconectado del servidor.")
                     break
@@ -65,9 +65,10 @@ class GameClient:
                 while "\n" in buffer:
                     line, buffer = buffer.split("\n", 1)
                     if line.strip():
-                        self._handle_server_message(line.strip())
+                        self._handle_server_message(line)
                         
             except ConnectionAbortedError:
+                print("[CLIENTE] El servidor cerró la conexión.")
                 break
             except Exception as e:
                 print(f"[TCP] Error leyendo del servidor: {e}")
@@ -79,15 +80,26 @@ class GameClient:
             msg_type = msg.get("type")
             
             if msg_type == "welcome":
-                self.my_id = msg.get("id")
+                # El estándar usa 'player_id', no 'id'
+                self.my_id = msg.get("player_id", msg.get("id"))
                 self.server_config = msg.get("config", {})
+            elif msg_type == "lobby":
+                self.lobby_players = msg.get("players", [])
+            elif msg_type == "countdown":
+                self.game_state = "COUNTDOWN"
+                self.countdown_seconds = msg.get("seconds", 0)
+            elif msg_type == "start":
+                self.game_state = "PLAYING"
             elif msg_type == "state":
                 self.latest_state = msg
-                self.game_state = msg.get("game_state", "LOBBY")
-                self.winner = msg.get("winner")
+                # Si el servidor manda el game_state lo usamos, sino, mantenemos el que tenemos
+                self.game_state = msg.get("game_state", self.game_state)
+                self.winner = msg.get("winner", getattr(self, "winner", None))
                 self._render_ui()
-            elif msg_type == "lobby":
-                self.lobby_players = msg["players"]
+            elif msg_type == "game_over":
+                self.game_state = "GAME_OVER"
+                # Algunos servidores usan 'winner', otros usan 'player_id'
+                self.winner = msg.get("winner", msg.get("player_id"))
         except json.JSONDecodeError:
             pass
 
