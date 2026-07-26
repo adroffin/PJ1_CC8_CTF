@@ -19,13 +19,12 @@ class GameEngine:
         self.tcp_server = tcp_server
         self.running = False
         self.last_tick = time.perf_counter()
-
         self.is_game_over = False
         self.winner_name = None
-
         self.game_state = "LOBBY"
-
         self.countdown_start = None
+        self.game_over_start = None
+        self.manual_start = False
         
         self.lock = threading.Lock()  # Candado para proteger la memoria compartida
         
@@ -84,6 +83,12 @@ class GameEngine:
     def get_player_count(self):
         with self.lock:
             return len(self.players)
+
+    def start_game_manually(self):
+        """Activa la bandera para que el loop inicie la cuenta regresiva."""
+        with self.lock:
+            if self.game_state == "LOBBY" and len(self.players) >= 2:
+                self.manual_start = True
 
     def update_player_input(self, player_id: str, dir_x: int, dir_y: int):
         """
@@ -167,7 +172,7 @@ class GameEngine:
 
                 # Cambio de estado dentro del juego
                 if self.game_state == "LOBBY":
-                    if len(self.players) >= 2:
+                    if len(self.players) >= 2 and self.manual_start:
                         self.game_state = "COUNTDOWN"
                         self.countdown_start = time.perf_counter()
                         print("[ENGINE] Iniciando cuenta regresiva...")
@@ -234,59 +239,65 @@ class GameEngine:
                                 self.is_game_over = True
 
                                 self.game_state = "GAME_OVER"
-                                print("[ENGINE] Fin de la partida.")
-
+                                self.game_over_start = time.perf_counter()
                                 self.winner_name = player["name"]
+
+                                print("[ENGINE] Fin de la partida.")
 
                                 print(
                                     f"[ENGINE] {self.winner_name} ganó la partida."
                                 )
                     
-                    players_list = []
-                    for p_id, p_data in self.players.items():
-                        # Creamos una copia para no alterar la memoria original
-                        player_info = p_data.copy()
-                        # Inyectamos el ID como una propiedad interna exigida por los clientes
-                        player_info["id"] = p_id
-                        players_list.append(player_info)
-
-                    # Construimos el mensaje usando la NUEVA lista en lugar del diccionario
-                    state_message = build_message(
-                        "state",
-                        players=players_list,
-                        flag=self.flag,
-                        game_state=self.game_state,
-                        winner=self.winner_name
-                    )
-
                 if self.game_state == "GAME_OVER":
+
+                    elapsed = time.perf_counter() - self.game_over_start
+
                     if self.is_game_over:
-                        self.game_state = "LOBBY"
-                        self.is_game_over = False
-                        self.winner_name = None
-                        center = MAP_SIZE // 2
-                        self.flag["carrier_id"] = None
-                        self.flag["x"] = center
-                        self.flag["y"] = center
+                        if elapsed >= 5:
+                            self.game_state = "LOBBY"
+                            self.is_game_over = False
+                            self.winner_name = None
+                            center = MAP_SIZE // 2
+                            self.flag["carrier_id"] = None
+                            self.flag["x"] = center
+                            self.flag["y"] = center
 
-                        for player in self.players.values():
+                            for player in self.players.values():
 
-                            player["has_flag"] = False
+                                player["has_flag"] = False
 
-                            player["dir_x"] = 0
-                            player["dir_y"] = 0
+                                player["dir_x"] = 0
+                                player["dir_y"] = 0
 
-                            player["x"] = random.choice([
-                                random.randint(PLAYER_RADIUS,150),
-                                random.randint(850,985)
-                            ])
+                                player["x"] = random.choice([
+                                    random.randint(PLAYER_RADIUS,150),
+                                    random.randint(850,985)
+                                ])
 
-                            player["y"] = random.choice([
-                                random.randint(PLAYER_RADIUS,150),
-                                random.randint(850,985)
-                            ])
+                                player["y"] = random.choice([
+                                    random.randint(PLAYER_RADIUS,150),
+                                    random.randint(850,985)
+                                ])
 
-                        print("[ENGINE] Regresando al Lobby.")
+                            print("[ENGINE] Regresando al Lobby.")
+
+                players_list = []
+                for p_id, p_data in self.players.items():
+                    # Creamos una copia para no alterar la memoria original
+                    player_info = p_data.copy()
+                    # Inyectamos el ID como una propiedad interna exigida por los clientes
+                    player_info["id"] = p_id
+                    players_list.append(player_info)
+
+                # Construimos el mensaje usando la NUEVA lista en lugar del diccionario
+                state_message = build_message(
+                    "state",
+                    players=players_list,
+                    flag=self.flag,
+                    game_state=self.game_state,
+                    winner=self.winner_name
+                )
+                    
             
             # 2. Transmitimos el estado a todos los clientes conectados
             if self.players:  # Solo transmitimos si hay al menos un jugador
