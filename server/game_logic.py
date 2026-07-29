@@ -30,7 +30,7 @@ class GameEngine:
         self.lock = threading.Lock()  # Candado para proteger la memoria compartida
         
         # --- Estado del Mundo ---
-        # Jugadores: {id: {"name": str, "x": int, "y": int, "score": int, "has_flag": bool}}
+        # Jugadores: {id: {"name": str, "x": int, "y": int, "has_flag": bool}}
         self.players = {}
         
         # Bandera: posición inicial en el centro del mapa de 1000x1000
@@ -59,7 +59,6 @@ class GameEngine:
                 "dir_x": 0,
                 "dir_y": 0,
 
-                "score": 0,
                 "has_flag": False
             }
             print(f"[ENGINE] Jugador '{name}' ({player_id}) agregado al estado del mundo en ({spawn_x},{spawn_y}).")

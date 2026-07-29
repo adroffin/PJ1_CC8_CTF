@@ -80,7 +80,6 @@ class GameClient:
             msg_type = msg.get("type")
             
             if msg_type == "welcome":
-                # El estándar usa 'player_id', no 'id'
                 self.my_id = msg.get("player_id", msg.get("id"))
                 self.server_config = msg.get("config", {})
             elif msg_type == "lobby":

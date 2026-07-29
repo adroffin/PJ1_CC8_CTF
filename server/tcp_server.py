@@ -3,7 +3,6 @@ import socket
 import threading
 import json
 import uuid
-import time
 from core.constants import (
     MAP_SIZE,
     CIRCLE_RADIUS,

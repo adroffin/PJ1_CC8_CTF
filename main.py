@@ -3,14 +3,14 @@ import time
 import pygame
 import threading
 
-# --- IMPORTACIONES DE TU LÓGICA ---
+# --- IMPORTACIONES LOGICA ---
 from server.tcp_server import TCPServer
 from server.game_logic import GameEngine
 from client.game_client import GameClient
 from core.protocol import build_message, encode_tcp_message
 from core.constants import MAP_SIZE, CIRCLE_RADIUS, PLAYER_RADIUS
 
-# --- IMPORTACIONES UDP (TUS ARCHIVOS) ---
+# --- IMPORTACIONES UDP ---
 from client.discovery_scanner import DiscoveryScanner
 from server.discovery_service import DiscoveryService
 
@@ -64,10 +64,12 @@ def main():
 
     player_name = ""
     server_ip = "127.0.0.1"
-    server_port = 5555  
+    server_port_str = "5555"  
+    server_port = 5555
     
     name_rect = pygame.Rect(200, 160, 400, 40)
-    ip_rect = pygame.Rect(200, 250, 280, 40) 
+    ip_rect = pygame.Rect(200, 250, 200, 40) 
+    port_rect = pygame.Rect(410, 250, 70, 40) 
     search_btn_rect = pygame.Rect(490, 250, 110, 40) 
     
     active_input = None
@@ -124,7 +126,7 @@ def main():
             search_status = thread_results["search_msg"]
             if thread_results["found_ip"]:
                 server_ip = thread_results["found_ip"]
-                server_port = thread_results["found_port"]
+                server_port_str = str(thread_results["found_port"])
             is_searching = False
             thread_results["search_done"] = False
 
@@ -154,6 +156,8 @@ def main():
                             active_input = "NAME"
                         elif ip_rect.collidepoint(event.pos):
                             active_input = "IP"
+                        elif port_rect.collidepoint(event.pos):
+                            active_input = "PORT"
                         else:
                             active_input = None
 
@@ -184,13 +188,14 @@ def main():
                         elif 200 <= mouse_pos[0] <= 600 and 450 <= mouse_pos[1] <= 530 and not is_connecting:
                             final_name = player_name.strip() if player_name.strip() else "JugadorAnonimo"
                             final_ip = server_ip.strip() if server_ip.strip() else "127.0.0.1"
+                            final_port = int(server_port_str) if server_port_str.strip() else 5555
                             
                             is_connecting = True
-                            connection_status = "Conectando al servidor..."
+                            connection_status = f"Conectando a {final_ip}:{final_port}..."
                             search_status = ""
                             threading.Thread(
                                 target=connect_client_thread, 
-                                args=(final_ip, server_port, final_name), 
+                                args=(final_ip, final_port, final_name), 
                                 daemon=True
                             ).start()
 
@@ -201,12 +206,16 @@ def main():
                             player_name = player_name[:-1]
                         elif active_input == "IP":
                             server_ip = server_ip[:-1]
+                        elif active_input == "PORT":
+                            server_port_str = server_port_str[:-1]
                     else:
                         if event.unicode.isprintable():
                             if active_input == "NAME" and len(player_name) < 15:
                                 player_name += event.unicode
                             elif active_input == "IP" and len(server_ip) < 15:
                                 server_ip += event.unicode
+                            elif active_input == "PORT" and len(server_port_str) < 5 and event.unicode.isdigit():
+                                server_port_str += event.unicode
 
             # --- EVENTOS DEL SERVIDOR ---
             if app_state == "SERVER" and event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
@@ -232,11 +241,19 @@ def main():
             disp_name = player_name + ("|" if active_input == "NAME" and time.time() % 1 > 0.5 else "")
             screen.blit(font.render(disp_name, True, (0, 0, 0) if active_input == "NAME" else C_WHITE), (name_rect.x + 10, name_rect.y + 5))
 
-            draw_text(screen, "IP del Servidor (Cliente):", font, C_WHITE, 200, 220)
+            draw_text(screen, "IP del Servidor y Puerto:", font, C_WHITE, 200, 220)
+            
+            # Dibujar caja de IP
             box_color_ip = C_ACTIVE_BOX if active_input == "IP" else C_INACTIVE_BOX
             pygame.draw.rect(screen, box_color_ip, ip_rect, border_radius=5)
             disp_ip = server_ip + ("|" if active_input == "IP" and time.time() % 1 > 0.5 else "")
             screen.blit(font.render(disp_ip, True, (0, 0, 0) if active_input == "IP" else C_WHITE), (ip_rect.x + 10, ip_rect.y + 5))
+
+            # Dibujar caja de PUERTO
+            box_color_port = C_ACTIVE_BOX if active_input == "PORT" else C_INACTIVE_BOX
+            pygame.draw.rect(screen, box_color_port, port_rect, border_radius=5)
+            disp_port = server_port_str + ("|" if active_input == "PORT" and time.time() % 1 > 0.5 else "")
+            screen.blit(font.render(disp_port, True, (0, 0, 0) if active_input == "PORT" else C_WHITE), (port_rect.x + 10, port_rect.y + 5))
 
             btn_color = C_ORANGE if search_btn_rect.collidepoint(mouse_pos) else C_GRAY
             pygame.draw.rect(screen, btn_color, search_btn_rect, border_radius=5)
@@ -276,7 +293,6 @@ def main():
                     pygame.draw.rect(screen, C_YELLOW, (fx - 10, fy - 10, 20, 20))
 
                 for player in players_list:
-                    # Usamos .get() con un valor por defecto seguro para evitar KeyErrors
                     px = player.get("x", MAP_SIZE // 2) * SCALE
                     py = player.get("y", MAP_SIZE // 2) * SCALE
                     p_name = player.get("name", "Jugador")
@@ -328,7 +344,6 @@ def main():
                         pygame.draw.rect(screen, C_YELLOW, (fx - 10, fy - 10, 20, 20))
 
                     for player in state.get("players", []):
-                        # Prevención de KeyError usando .get()
                         px = player.get("x", MAP_SIZE // 2) * SCALE
                         py = player.get("y", MAP_SIZE // 2) * SCALE
 
