@@ -356,8 +356,9 @@ def main():
                                     p_name = lp.get("name", "Jugador")
                                     break
                         
-                        is_me = (player.get("id") == my_client.my_id)
-                        color = C_YELLOW if player.get("has_flag") else (C_GREEN if is_me else C_RED)
+                        is_me = (p_id == my_client.my_id)
+                        is_flag_carrier = (flag.get("owner") == p_id)
+                        color = C_YELLOW if is_flag_carrier else (C_GREEN if is_me else C_RED)
                         
                         pygame.draw.circle(screen, color, (px, py), PLAYER_RADIUS * SCALE)
                         draw_text(screen, p_name, font, C_WHITE, px, py - 25, center=True)

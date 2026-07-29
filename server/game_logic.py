@@ -272,15 +272,21 @@ class GameEngine:
 
                     if self.is_game_over:
                         if elapsed >= 5:
+                            # 1. Reiniciar estado general
                             self.game_state = "LOBBY"
                             self.is_game_over = False
                             self.winner_name = None
+                            self.manual_start = False # Apagamos el inicio automático para que requiera click manual
+                            
+                            # 2. Reiniciar la bandera
                             center = MAP_SIZE // 2
                             self.flag["owner"] = None
                             self.flag["x"] = center
                             self.flag["y"] = center
 
-                            for player in self.players.values():
+                            # 3. Preparar la lista de jugadores para el broadcast del lobby y resetear posiciones
+                            players_in_lobby = []
+                            for p_id, player in self.players.items():
 
                                 player["has_flag"] = False
 
@@ -296,8 +302,20 @@ class GameEngine:
                                     random.randint(PLAYER_RADIUS,150),
                                     random.randint(850,985)
                                 ])
+                                
+                                players_in_lobby.append({
+                                    "id": p_id,
+                                    "name": player["name"]
+                                })
 
-                            print("[ENGINE] Regresando al Lobby.")
+                            print("[ENGINE] 5 segundos transcurridos. Regresando al Lobby.")
+                            
+                            # 4. Fundamental: Avisarle a todos los clientes que volvimos al lobby
+                            lobby_msg = {
+                                "type": "lobby",
+                                "players": players_in_lobby
+                            }
+                            self.tcp_server.broadcast(lobby_msg)
 
                 if self.game_state in ["PLAYING", "GAME_OVER"]:
                     players_list = []
